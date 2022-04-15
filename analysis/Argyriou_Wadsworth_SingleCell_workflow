@@ -1,0 +1,462 @@
+### Title: Single Cell Workflow
+### Author: Marc Wadsworth
+
+#### setup environment for libs
+libpath <- "/path/to/workspace/rpkgs"
+.libPaths(libpath)
+library(devtools)
+
+# libraries
+library(Nebulosa)
+library(devtools)
+library(remotes)
+library(ggplot2)
+library(dplyr)
+library(cowplot)
+library(harmony)
+library(Seurat)
+packageVersion('Seurat')
+library(clustree)
+library(DoubletFinder)
+library(stringr)
+library(sceasy)
+library(reticulate)
+library(velocyto.R)
+library(SeuratDisk)
+
+#### PART 1 - read in gene expressio matrices ####
+# read in unfiltered DGEs for RA1-7
+RA1_GEX = Read10X('/path/to/folder/RA1_GEX/outs/filtered_feature_bc_matrix/')
+RA2_GEX = Read10X('/path/to/folder/RA2_GEX/outs/filtered_feature_bc_matrix/')
+RA3_GEX = Read10X('/path/to/folder/RA3_GEX/outs/filtered_feature_bc_matrix/')
+RA4_GEX = Read10X('/path/to/folder/RA4_GEX/outs/filtered_feature_bc_matrix/')
+RA5_GEX = Read10X('/path/to/folder/RA5_GEX/outs/filtered_feature_bc_matrix/')
+RA6_GEX = Read10X('/path/to/folder/RA6_GEX/outs/filtered_feature_bc_matrix/')
+RA7_GEX = Read10X('/path/to/folder/RA7_GEX/outs/filtered_feature_bc_matrix/')
+
+# read in unfiltered DGEs for RA8-15
+# PBMC compartment
+RA8_GEX_PB = Read10X('/path/to/folder/RA8_GEX_PB/outs/filtered_feature_bc_matrix/')
+RA9_GEX_PB = Read10X('/path/to/folder/RA9_GEX_PB/outs/filtered_feature_bc_matrix/')
+RA10_GEX_PB = Read10X('/path/to/folder/RA10_GEX_PB/outs/filtered_feature_bc_matrix/')
+RA11_GEX_PB = Read10X('/path/to/folder/RA11_GEX_PB/outs/filtered_feature_bc_matrix/')
+RA12_GEX_PB = Read10X('/path/to/folder/RA12_GEX_PB/outs/filtered_feature_bc_matrix/')
+RA13_GEX_PB = Read10X('/path/to/folder/RA13_GEX_PB/outs/filtered_feature_bc_matrix/')
+RA14_GEX_PB = Read10X('/path/to/folder/RA14_GEX_PB/outs/filtered_feature_bc_matrix/')
+RA15_GEX_PB = Read10X('/path/to/folder/RA15_GEX_PB/outs/filtered_feature_bc_matrix/')
+
+RA8_GEX_PB = Read10X('/path/to/folder/RA8_GEX_SF_PB/outs/filtered_feature_bc_matrix/')
+RA9_GEX_SF_PB = Read10X('/path/to/folder/RA9_GEX_SF_PB/outs/filtered_feature_bc_matrix/')
+RA10_GEX_SF_PB = Read10X('/path/to/folder/RA10_GEX_SF_PB/outs/filtered_feature_bc_matrix/')
+RA11_GEX_SF_PB = Read10X('/path/to/folder/RA11_GEX_SF_PB/outs/filtered_feature_bc_matrix/')
+RA12_GEX_SF_PB = Read10X('/path/to/folder/RA12_GEX_SF_PB/outs/filtered_feature_bc_matrix/')
+RA13_GEX_SF_PB = Read10X('/path/to/folder/RA13_GEX_SF_PB/outs/filtered_feature_bc_matrix/')
+RA14_GEX_SF_PB = Read10X('/path/to/folder/RA14_GEX_SF_PB/outs/filtered_feature_bc_matrix/')
+RA15_GEX_SF_PB = Read10X('/path/to/folder/RA15_GEX_SF_PB/outs/filtered_feature_bc_matrix/')
+
+#### PART 2 - incorporate metadata, preprocess objects, and remove doublets ####
+# SOP for cleaning data
+# 1. filter cells
+    # 200 < UMI < 4000 & < 25% mito
+# 2. call doublets
+# back calc rate
+# 3. remove doublets, as well as non-CD4 T Cells
+
+
+## PART 2A - preprocessing function / metadata incorporation ##
+@dge_mtx = raw UMI-collpased matrix
+@project_name = name of project
+@sampleID = sampleID (internal)
+@publishID = sampleID (external/for publication)
+@compartment = tissue compartment
+@ACPA_status = ACPA+ or ACPA- (includes titer levels)
+@HLA = HLA status
+@age = biological age
+@biological_sex_assignment = biological sex
+@name = user-input name for updated seurat object
+
+# function below
+object_preprocessing_metadata_incorporation = function(dge_mtx,project_name,sampleID,publishID,compartment,ACPA_status,HLA,age,biological_sex_assignment,name){
+ 
+  # create seurat object
+  srt <- CreateSeuratObject(counts = mtx,project = project_name,assay = 'RNA',min.features = 200)
+ 
+  # add mitochondrial percentage
+  srt[['percent_mito']] <- PercentageFeatureSet(object = srt,pattern = '^MT-')
+  srt_filt = subset(srt,subset = percent_mito < 25)
+  
+  # add metadata
+  srt_filt$sampleID = sampleID
+  srt_filt$publishID = publishID
+  srt_filt$compartment = compartment
+  srt_filt$ACPA_status = ACPA_status
+  srt_filt$HLA = HLA
+  srt_filt$age = age
+  srt_filt$biological_sex_assignment = biological_sex_assignment
+  
+  # preproc individual object - note: generic pipeline for DoubletFinder input
+  srt_filt = NormalizeData(srt_filt) %>%
+    FindVariableFeatures(assay = 'RNA',selection.method = 'vst') %>%
+    ScaleData(verbose = TRUE,vars.to.regress = c('percent.mt','nCount_RNA')) %>%
+    RunPCA(assay = 'RNA',npcs = 50) %>%
+    RunUMAP(dims = 1:50,return.model = TRUE)
+  
+  # new name
+  assign(name,srt_filt,envir = .GlobalEnv)
+}
+object_preprocessing_metadata_incorporation()
+
+## PART 2B - remove doublets ##
+@seurat_object = user's seurat object
+@doublet_obj = user-defined doublet percentage
+
+ # function below
+calculate_my_doublets = function(seurat_object,doublet_obj,name){
+  # find doublet rate
+  sweep.res.list = paramSweep_v3(srt, PCs = 1:50, sct = F)
+  sweep.stats = summarizeSweep(sweep.res.list, GT = FALSE)
+  # order values and select
+  bcmvn = find.pK(sweep.stats)
+  bcmvn = bcmvn[order(bcmvn$BCmetric,decreasing = T),]
+  pK_value = bcmvn[1,2]
+  pK_value = as.character(pK_value)
+  pK_value = as.numeric(pK_value)
+  
+  # get doublets
+  doublet_percent = doublet_obj
+  #doublet_percent = 0.14
+  nExp_poi <- round(doublet_percent*nrow(srt@meta.data))
+  srt <- doubletFinder_v3(srt, PCs = 1:50, pN = 0.25, pK = pK_value,nExp = nExp_poi, reuse.pANN = F, sct = F)
+  
+  # assign
+  colnames(srt@meta.data)[14] = 'DoubletFinder_Results'
+  assign(name,srt,envir = .GlobalEnv)  
+}
+
+# merge cleaned and Singlets identified from above functions
+object_RA1_15_cleaned_srt = merge(RA1,list(RA2,RA3,RA4,RA5,RA6,RA7,
+                                  RA8_PB,RA8_SF,RA9_PB,RA9_SF,RA10_PB,
+                                  RA10_SF,RA11_PB,RA11_SF,RA12_PB,RA12_SF,
+                                  RA13_PB,RA13_SF,RA14_PB,RA14_SF,RA15_PB,RA15_SF))
+
+# remove TCR, NonPseudoY, and non-CD4 T Cells
+TCR_genes = read.csv('/path/to/TCR_genes.csv',header=T)
+NonPseudoY_genes = read.csv('/path/to/NonPseudoY_genes.csv',header=T)
+Non_CD4TCell_genes = read.csv('/path/to/NonCD4TCell_genes.csv',header=T)
+
+RemoveMyGenes = function(data,gene_list1,gene_list2,name){
+  matrix_raw <- data[['RNA']]@counts
+  # remove NonPseudoY and TCR genes
+  matrix_raw_NoY <- matrix_raw[!rownames(matrix_raw) %in% as.character(NonPseudoY_genes$NonPseudoY),]
+  matrix_raw_NoY_NoTCR <- matrix_raw_NoY[!rownames(matrix_raw_NoY) %in% as.character(TCR_genes$TCR_genes),]
+  # metadata
+  meta = data@meta.data
+
+  # remake seurat object
+  seurat_NoTCR_NoY = CreateSeuratObject(counts = matrix_raw_NoY_NoTCR,meta.data = meta)
+  seurat_NoTCR_NoY[["percent.mt"]] <- PercentageFeatureSet(seurat_NoTCR_NoY, pattern = "^MT-")
+  seurat_NoTCR_NoY = AddMetaData(seurat_NoTCR_NoY,meta)
+  
+  # remove Non-CD4 T Cells
+
+  seurat_NoTCR_NoY_OnlyCD4_TCells = subset(seurat_NoTCR_NoY,
+                                        subset = Non_CD4TCell_genes[1] < 1 & 
+                                        Non_CD4TCell_genes[2] < 1 & 
+                                        Non_CD4TCell_genes[3] < 1 & 
+                                        Non_CD4TCell_genes[4] < 1 & CD3D > 0 & CD4 > 0)
+
+  assign(name,seurat_NoTCR_NoY_OnlyCD4_TCells,envir = .GlobalEnv)
+}
+
+### PART 3 - Unsupervised Analysis of RA1-15 and cell type annotation
+
+## PART 3A - Unsupervised Analysis
+Unsupervised_Analysis_RNA = function(data,var_features,name){
+  # preproc
+  DefaultAssay(data) = 'RNA'
+  data = DietSeurat(data)
+  data = NormalizeData(object = data)
+  data = FindVariableFeatures(object = data,selection.method = 'vst',nfeatures =var_features)
+  
+  # RPL filter
+  gene.names <- rownames(data)
+  gene.names.ribo.l <- gene.names[grep(x = gene.names,pattern = '^RPL')]
+  length(gene.names.ribo.l) # 56_genes
+  gene.names.ribo.l <- as.data.frame(gene.names.ribo.l)
+  colnames(gene.names.ribo.l)[1] <- 'Gene_symbols'
+  
+  # # RPS filter
+  gene.names.ribo.s <- gene.names[grep(x = gene.names,pattern = '^RPS')]
+  length(gene.names.ribo.s) # 48_genes
+  gene.names.ribo.s <- as.data.frame(gene.names.ribo.s)
+  colnames(gene.names.ribo.s)[1] <- 'Gene_symbols'
+  hg38.ribosomal.genes <- rbind (gene.names.ribo.l,gene.names.ribo.s)
+  hg38.ribosomal.gene.list <- list(as.character(hg38.ribosomal.genes$Gene_symbols))
+  data[["percent.rb"]] <- PercentageFeatureSet(data, features = unlist(hg38.ribosomal.gene.list))
+  data[["percent.mt"]] <- PercentageFeatureSet(data, pattern = "^MT-")
+  
+  # scale data
+  # note: rather than using variable genes for scaling, 
+    # we used non-zero variance genes so that we're not missing genes in DEG visualizations (DEG: differential gene expression).
+  genes_use = Seurat:::CheckFeatures(object.name = name,data  = data[['RNA']]@data, features = rownames(data[['RNA']]@data),verbose = F)
+  data <- ScaleData(object = data,vars.to.regress = c('percent.mt','nCount_RNA','S.Score', 'G2M.Score'),verbose = TRUE,features = genes_use)
+  data = RunPCA(data,assay = 'RNA',npcs = 100)
+  
+  # JackStraw
+  # PC Jackstraw
+  data <- JackStraw(data,reduction = 'pca',dims = 100)
+  data <- ScoreJackStraw(data,reduction = 'pca',dims = 1:100,score.thresh = 0.05,do.plot = F)
+  
+  # Select Significant PCs
+  JackStrawResults <- as.data.frame(JS(object = data[['pca']], slot = 'overall'))
+  JackStrawResults.Significant <- JackStrawResults[JackStrawResults$Score < 0.05,]
+  dims <- list(JackStrawResults.Significant$PC)
+  
+  # integrate and visualize
+  data = RunHarmony(object = data,group.by.vars=c('sampleID'),
+                    reduction='pca',assay.use = 'RNA',dims.use = dims,max.iter.harmony = 30)
+  # harmony
+  data <- FindNeighbors(data,dims = dims,reduction = 'harmony',assay = 'RNA',)
+  data <- RunUMAP(data,dims = dims,assay = 'RNA',reduction = 'harmony',return.model = T)
+
+  # write and save
+  assign(name,data,envir = .GlobalEnv)
+}
+UnsupervisedAnalysis_RNA(seurat_NoTCR_NoY_OnlyCD4_TCells,3000,name)
+
+# optimize clustering resolution
+seurat_NoTCR_NoY_OnlyCD4_TCells = FindClusters(seurat_NoTCR_NoY_OnlyCD4_TCells,resolution = seq(0,2,0.1),method = 'igraph')
+clustree(seurat_NoTCR_NoY_OnlyCD4_TCells,prefix = 'RNA_snn_res.') 
+
+## PART 3B - cell type annotation
+
+## P3B.1 - Nebulosa plots of known CD4 T Cell markers
+data = seurat_NoTCR_NoY_OnlyCD4_TCells
+cluster = DimPlot(data,label=T)+NoAxes()+NoGrid()+NoLegend()
+
+mem_cd4 = plot_density(data,features = c('SELL','CCR7','IL7R'),joint = T,combine = T,size = 2)[[4]]+NoAxes()+NoGrid()+NoLegend()
+mem2 = plot_density(data,features = c('SELL'),size = 2)+NoAxes()+NoGrid()+NoLegend()
+effector = plot_density(data,features = c('CCR6','KLRB1','CD27'),joint = T,combine = T,size = 2)[[4]]+NoAxes()+NoGrid()+NoLegend()
+Tregs = plot_density(data,features = c('TIGIT','FOXP3'),joint = T,combine = T,size = 2)[[3]]+NoAxes()+NoGrid()+NoLegend()
+cyto = plot_density(data,features = c('PRF1','GNLY'),joint = T,combine = T,size = 2)[[3]]+NoAxes()+NoGrid()+NoLegend()
+prolif = plot_density(data,features = c('MKI67'))+NoAxes()+NoGrid()+NoLegend()
+activated_T = plot_density(data,features = c('CD38','HLA-DRA'),joint = T,combine = T,size = 2)[[3]]+NoAxes()+NoGrid()+NoLegend()
+humanin_T = plot_density(data,features = c('MTRNR2L12','MTRNR2L8'),joint = T,combine = T,size = 2)[[3]]+NoAxes()+NoGrid()+NoLegend()
+ERG1_T = plot_density(data,features = c('EGR1'),size=2)+NoAxes()+NoGrid()+NoLegend()
+MitoHi_T = plot_density(data,features = c('MT-CO1','MT-ATP8'),size=2,joint = T,combine = T)[[3]]+NoAxes()+NoGrid()+NoLegend()
+Tph_T = plot_density(data,features = c('CXCL13','PDCD1'),size=2,joint = T,combine = T)[[3]]+NoAxes()+NoGrid()+NoLegend()
+TphPRDM1_T = plot_density(data,features = c('PRDM1','ADGRG1'),size=2,joint = T,combine = T)[[3]]+NoAxes()+NoGrid()+NoLegend()
+TTN_T = plot_density(data,features = c('TTN'),size=2)+NoAxes()+NoGrid()+NoLegend()
+LAMP3_T = plot_density(data,features = c('LAMP3'),size=2)+NoAxes()+NoGrid()+NoLegend()
+IL13RA_T = plot_density(data,features = c('IL13RA1'),size=2)+NoAxes()+NoGrid()+NoLegend()
+Th1 = plot_density(data,features = c('TBX21','ANXA3','GZMK'),joint = T,combine = T,size = 1)[[4]]+NoAxes()+NoGrid()+NoLegend()
+IL13RA_T = plot_density(data,features = c('NR4A1','NEAT1','ANKRD36'),size=2,combine=T,joint=T)[[4]]+NoAxes()+NoGrid()+NoLegend()
+
+## P3.2 - Differential Gene Expression Analysis, clusters
+
+# Heatmap Visualization
+data = seurat_NoTCR_NoY_OnlyCD4_TCells
+Idents(data) = 'seurat_clusters'
+
+clusters_viz = DimPlot(data,label=T)+NoLegend()+NoAxes()+NoGrid()
+clusters_markers = FindAllMarkers(data,test.use = 'MAST',
+                    only.pos = T,max.cells.per.ident = 2000,min.pct = 0.2) #note: due to differences in cell number, we set the maximum # of cells/group to 2K
+top20 = celltypes_markers %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC)
+heatmap_viz = subset(data,downsample=30) # downsampled to improve quality of visualization
+heatmap_visualization = DoHeatmap(heatmap_viz, features = top10$gene,assay = 'RNA') + 
+  NoLegend()+ scale_fill_gradientn(colors = c("cyan", "black", "orange"))
+# visualize clusters with heatmap
+celltypes + heatmap_visualization
+
+# based on DGE analysis, subset potential Non-CD4TCell clusters for further investigation
+unknown_clusterX = clusters_markers[clusters_markers$cluster=='clusterX,]
+unknown_clusterX_sig = unknown_clusterX[unknown_clusterX$avg_log2FC>0.5 & unknown_clusterX$p_val_adj<0.01,]
+write.csv(unknown_cluster_X_sig$gene,'unknown_clusterX_sig_genes.csv') # gene list was used to cross-reference databases (e.g., Azimuth, MSigDB, etc.) to better profile cluster of interest
+
+
+# Following QC of unknown clusters, subset identified T cells 
+celltypes_keep = read.csv('/path/to/clusters_keep.csv')
+Idents(seurat_NoTCR_NoY_OnlyCD4_TCells) = 'seurat_clusters'
+seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter = subset(seurat_NoTCR_NoY_OnlyCD4_TCells,idents = celltypes_keep)
+
+# wipe clean and revisualize
+seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter = DietSeurat(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter)
+UnsupervisedAnalysis_RNA(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter,3000,'seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter')
+
+
+### P3.3 - Cluster Annotation
+# Based on the results of the DE analysis, expression of known CD4 T Cell genes, and enrichment for known CD4 T Cell programs (Azimuth), seurat clusters at a stable resolution were assigned. To do this, we generated a dataframe containin two columns; (1) Seurat Clusters and (2) Cell Types. Then, we for looped through the seurat object and added a new column titled 'celltypes_nov2021'
+
+clusters2celltypes = read.csv('/path/to/clusters2celltypes.csv')
+print(colnames(clusters))
+'seurat_clusters' 'annotated_celltypes'
+
+clusters_only = seurat_clusters$seurat_clusters
+for (i in 1:length(clusters_only)){
+  # select cluster
+  cluster_use = as.factor(clusters_only)[i]
+  # subset cluster list
+  clusters_subset = clusters2celltypes[clusters2celltypes$seurat_clusters==cluster_use,]
+  seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter@meta.data$celltype_test[seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter$seurat_clusters==clusters_subset[[1]]]= as.character(clusters_subset[[2]])
+  
+}
+
+## P3.4 - Visualization
+
+# heatmap
+data = seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter
+Idents(data) = 'seurat_clusters'
+
+celltypes_visualization = DimPlot(data,label=T,group.by='celltypes_nov2021')+NoLegend()+NoAxes()+NoGrid()
+clusters_markers = FindAllMarkers(data,test.use = 'MAST',
+                    only.pos = T,max.cells.per.ident = 2000,min.pct = 0.2)
+top20 = celltypes_markers %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC)
+heatmap_viz = subset(data,downsample=30) # downsampled to improve quality of visualization
+heatmap_visualization = DoHeatmap(heatmap_viz, features = top10$gene,assay = 'RNA') + 
+  NoLegend()+ scale_fill_gradientn(colors = c("cyan", "black", "orange"))
+celltypes + heatmap_visualization
+
+# save object
+saveRDS(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter,'/path/to/RDS/files/seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter.rds')
+
+# save object for scVelo analysis
+seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter = DietSeurat(object = seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter,
+                                                    counts = T,data = T,scale.data = F,dimreducs = c('pca','harmony','umap'),graphs = c('RNA_nn','RNA_snn'))
+SaveH5Seurat(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter, filename = "/path/to/h5Seurat/files/seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter.h5Seurat",overwrite = T,verbose = T)
+Convert("/path/to/h5Seurat/files/seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter.h5Seurat", dest = "h5ad")
+
+#### PART 4 - TCR analysis using scRepertoire
+
+# P4.1 - read in relevant files
+seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter = LoadH5Seurat("/path/to/h5Seurat/files/seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter.h5Seurat")
+
+# read in TCR annotation files
+sample1_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample1TCR_filtered_contig_annotations.csv")
+sample2_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample2TCR_filtered_contig_annotations.csv")
+sample3_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample3TCR_filtered_contig_annotations.csv")
+sample4_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample4TCR_filtered_contig_annotations.csv")
+
+sample5_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample5TCR_filtered_contig_annotations.csv")
+sample6_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample6TCR_filtered_contig_annotations.csv")
+sample7_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample7TCR_filtered_contig_annotations.csv")
+sample8_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample8TCR_filtered_contig_annotations.csv")
+
+sample9_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample9TCR_filtered_contig_annotations.csv")
+sample10_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample10TCR_filtered_contig_annotations.csv")
+sample11_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample11TCR_filtered_contig_annotations.csv")
+sample12_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample12TCR_filtered_contig_annotations.csv")
+
+sample13_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample13TCR_filtered_contig_annotations.csv")
+sample14_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample14TCR_filtered_contig_annotations.csv")
+sample15_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample15TCR_filtered_contig_annotations.csv")
+sample16_tcr <- read.csv("/Users/marcwadsworthii/Downloads/MHW45_KI_PBSF_EXP6_cellranger_TCR_sample16TCR_filtered_contig_annotations.csv")
+
+# P4.2 - grab TCRs from global environment, subset RA8-15, and modify barcodes in seurat object to match those in the annotation files
+# pull all tcr files from the global environment and organize
+sample_tcr_names <-grep("*_tcr*",names(.GlobalEnv),value=TRUE)
+sample_tcr_names <- as.character(sample_tcr_names)
+sample_tcr_names <- sort(sample_tcr_names)
+# generate a list
+sample_tcr_list <- do.call("list",mget(sample_tcr_names))
+sample_tcr_names_split = unlist(strsplit(sample_tcr_names,split = '_',fixed = T))
+sample_tcr_names_split = as.data.frame(sample_tcr_names_split)
+sample_tcr_names_use = sample_tcr_names_split[c(1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31),]
+
+# subset RA8-15
+Idents(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter) = 'orig.ident'
+seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter_RA8_15 = subset(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter,idents = 'set2')
+# note: set 1 == RA1-7; set 2 == RA8-15
+
+
+publishID_all = unique(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter_RA8_15$publishID)
+
+for (i in 1:length(publishID_all)){
+  ID_use = publishID_all[i]
+  print(ID_use)
+  # subset by publishID
+  Idents(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter_RA8_15) = 'publishID_all'
+  data_subset = subset(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter_RA8_15,idents = ID_use)
+  
+  # rename barcodes to met scRepertoire requirements
+  data_subset$scRepertoire_barcodes = paste(ID_use,unique(data_subset$compartment),data_subset$barcodes_only,sep = '_')
+  data_subset$scRepertoire_barcodes = paste(data_subset$scRepertoire_barcodes,1,sep = '-')
+  
+  # rename cells in the object
+  cells_use = data_subset$scRepertoire_barcodes
+  data_subset = RenameCells(object = data_subset,new.names = cells_use)
+  data_subset$barcodes_one = paste(data_subset$barcodes_only,1,sep = '-')
+  
+  assign(paste(ID_use,'scRepertoire_srt',sep = '_'),data_subset,envir = .GlobalEnv)
+}
+
+# merge by ACPA status
+ACPA_POS_SF_srt = merge(sample6_scRepertoire_srt,list(sample8_scRepertoire_srt,sample14_scRepertoire_srt,sample16_scRepertoire_srt))
+ACPA_POS_PB_srt = merge(sample5_scRepertoire_srt,list(sample7_scRepertoire_srt,sample13_scRepertoire_srt,sample15_scRepertoire_srt))
+ACPA_NEG_SF_srt = merge(sample2_scRepertoire_srt,list(sample4_scRepertoire_srt,sample10_scRepertoire_srt,sample12_scRepertoire_srt))
+ACPA_NEG_PB_srt = merge(sample1_scRepertoire_srt,list(sample3_scRepertoire_srt,sample9_scRepertoire_srt,sample11_scRepertoire_srt))
+
+## P4.3 - Prepare TCR annotations and incorporate into seurat object
+
+# prepare TCR annotation files (refer to scRepertoire tutorial for more details)
+contig_list_ACPAPOS_SFMC = list(sample6_tcr,sample8_tcr,sample14_tcr,sample16_tcr)
+combined_ACPAPOS_SFMC <- combineTCR(contig_list_ACPAPOS_SFMC,
+                                    samples = c('sample6','sample8','sample14','sample16'),
+                                    ID = c('SFMC','SFMC','SFMC','SFMC'), cells ="T-AB")
+# ACPA+ PBMC
+contig_list_ACPAPOS_PBMC = list(sample5_tcr,sample7_tcr,sample13_tcr,sample15_tcr)
+combined_ACPAPOS_PBMC <- combineTCR(contig_list_ACPAPOS_PBMC,
+                                    samples = c('sample5','sample7','sample13','sample15'),
+                                    ID = c('PBMC','PBMC','PBMC','PBMC'), cells ="T-AB")
+# ACPA_NEG SFMC
+contig_list_ACPANEG_SFMC = list(sample2_tcr,sample4_tcr,sample10_tcr,sample12_tcr)
+combined_ACPANEG_SFMC <- combineTCR(contig_list_ACPANEG_SFMC,
+                                    samples = c('sample2','sample4','sample10','sample12'),
+                                    ID = c('SFMC','SFMC','SFMC','SFMC'), cells ="T-AB")
+# ACPA_NEG PBMC
+contig_list_ACPANEG_PBMC = list(sample1_tcr,sample3_tcr,sample9_tcr,sample11_tcr)
+combined_ACPANEG_PBMC <- combineTCR(contig_list_ACPANEG_PBMC,
+                                    samples = c('sample1','sample3','sample9','sample11'),
+                                    ID = c('PBMC','PBMC','PBMC','PBMC'), cells ="T-AB")
+
+# Add TCR information to seurat object
+ACPA_POS_SF_srt <- combineExpression(combined_ACPAPOS_SFMC,
+                                     ACPA_POS_SF_srt,
+                                     cloneCall="aa", group.by = "sample", proportion = TRUE)
+
+ACPA_POS_PB_srt <- combineExpression(combined_ACPAPOS_PBMC,
+                                     ACPA_POS_PB_srt,
+                                     cloneCall="aa", group.by = "sample", proportion = TRUE)
+ACPA_NEG_SF_srt <- combineExpression(combined_ACPANEG_SFMC,
+                                     ACPA_NEG_SF_srt,
+                                     cloneCall="aa", group.by = "sample", proportion = TRUE)
+ACPA_NEG_PB_srt <- combineExpression(combined_ACPANEG_PBMC,
+                                     ACPA_NEG_PB_srt,
+                                     cloneCall="aa", group.by = "sample", proportion = TRUE)
+
+# Incorporate metadata back into the origianl object
+# subset original and add metadata
+metadata_POS_SF = ACPA_POS_SF_srt@meta.data
+metadata_POS_PB = ACPA_POS_PB_srt@meta.data
+metadata_NEG_SF = ACPA_NEG_SF_srt@meta.data
+metadata_NEG_PB = ACPA_NEG_PB_srt@meta.data
+
+# confirm rownames in metadata  matches rownames of seurat object, the add metadata to original object and save
+metadata_all = rbind(metadata_POS_SF,metadata_POS_PB,metadata_NEG_SF,metadata_NEG_PB)
+seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter = AddMetaData(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter,metadata = metadata_all)
+saveRDS(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter,'/path/to/scRepertoire/outputs.seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter.rds')
+
+
+## P4.4 - Visualization of clone overlaps
+
+# Chord diagrams
+circles <- getCirclize(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter, group.by = "celltypes_nov2021_compartment",cloneCall = 'gene+nt')
+Idents(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter) = 'celltypes_nov2021_compartment'
+grid.cols <- scales::hue_pal()(length(unique(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter@active.ident)))
+names(grid.cols) <- levels(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter@active.ident)
+
+par(cex = 0.2, mar = c(0, 0, 0, 0))
+circlize::chordDiagram(circles, self.link = 1, grid.col = grid.cols)
+
+# clonal overlap
+Idents(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter) = 'celltypes_nov2021_compartment'
+clonalOverlap(seurat_NoTCR_NoY_OnlyCD4_TCells_SecondPass_Filter, cloneCall="gene+nt", method="jaccard",exportTable = F)+ theme(axis.text.x = element_text(angle = 45,hjust = 1))
