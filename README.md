@@ -1,5 +1,4 @@
 # SISXXX : Analysis Repository Template for Systems Immunology
-
 This is meant to serve as a loose template for depositing and documenting analysis scripts.  
 Following recommentations are only an example of how git repos can be organizes, *not* a requirement.
 
