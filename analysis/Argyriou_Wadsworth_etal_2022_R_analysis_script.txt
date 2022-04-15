@@ -24,24 +24,6 @@ library(reticulate)
 library(velocyto.R)
 library(SeuratDisk)
 
-# Patient ID list
-# RA.1 <- RA2825
-# RA.2 <- RA3519
-# RA.3 <- RA3013
-# RA.4 <- RA2626
-# RA.5 <- RA3521
-# RA.6 <- RA3397
-# RA.7 <- RA3541
-# RA.8 = RA3002 #1/2 ACPA-
-# RA.9 = RA3323 #3/4 ACPA-
-# RA.10 = RA3300 #5/6 ACPA+
-# RA.11 = RA3694 #7/8 ACPA+
-# RA.12 = RA2929 #9/10 ACPA-
-# RA.13 = RA3658 #11/12 ACPA-
-# RA.14 = RA3150 #13/14 ACPA+
-# RA.15 = RA2896 #15/16 ACPA+
-
-
 #### PART 1 - read in gene expressio matrices ####
 # read in unfiltered DGEs for RA1-7
 RA1_GEX = Read10X('/path/to/folder/RA1_GEX/outs/filtered_feature_bc_matrix/')
